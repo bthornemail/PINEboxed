@@ -1,0 +1,48 @@
+#!/bin/sh
+# pineboxed — the server variant (the rev of boxedPINE the client).
+#
+# BusyBox-like: one file, one binary's applet (busybox httpd), serving the client
+# over HTTP. boxedPINE runs in the browser (client); PINEboxed serves it (server).
+# Two ends of one modem — client / server, the direction toggle in the name.
+#
+# Decoupled from the representation: it serves ANY docroot. The default is the
+# boxedPINE client build (../boxedPINE/dist), but the server does not care what
+# it carries — the circuit is independent of the projection.
+#
+#   pineboxed check              # can it serve? busybox httpd + a docroot — says no if not
+#   pineboxed serve [PORT] [DOCROOT]
+#   pineboxed build              # build the client (../boxedPINE), then serve it
+#
+# Env: BB (busybox path), PINE_PORT, PINE_CLIENT (boxedPINE root), PINE_DOCROOT.
+set -eu
+BB=${BB:-busybox}
+HERE=$(CDPATH= cd "$(dirname "$0")" && pwd)
+CLIENT=${PINE_CLIENT:-"$HERE/../boxedPINE"}
+cmd=${1:-serve}
+PORT=${2:-${PINE_PORT:-8780}}
+DOCROOT=${3:-${PINE_DOCROOT:-$CLIENT/dist}}
+fail(){ echo "pineboxed: $*" >&2; exit 1; }
+have_httpd(){ "$BB" httpd 2>&1 | grep -q . && return 0 || return 1; }
+
+case "$cmd" in
+  check)
+    have_httpd || fail "no busybox httpd (install busybox-static, or set BB)"
+    [ -d "$DOCROOT" ] || fail "docroot not found: $DOCROOT  (build the client: pineboxed build)"
+    [ -f "$DOCROOT/index.html" ] || fail "no index.html in $DOCROOT"
+    echo "pineboxed check: OK — busybox httpd present; docroot $DOCROOT has index.html"
+    ;;
+  build)
+    [ -d "$CLIENT" ] || fail "client not found at $CLIENT (set PINE_CLIENT)"
+    echo "pineboxed: building the client at $CLIENT ..."
+    ( cd "$CLIENT" && npm run build )
+    exec "$0" serve "$PORT" "$CLIENT/dist"
+    ;;
+  serve)
+    have_httpd || fail "no busybox httpd (install busybox-static, or set BB)"
+    [ -d "$DOCROOT" ] || fail "docroot not found: $DOCROOT  (try: pineboxed build)"
+    echo "pineboxed: serving $DOCROOT on http://127.0.0.1:$PORT  (busybox httpd; Ctrl-C to stop)"
+    exec "$BB" httpd -f -v -p "127.0.0.1:$PORT" -h "$DOCROOT"
+    ;;
+  -h|--help|help) sed -n '2,15p' "$0" ;;
+  *) fail "unknown command: $cmd (check | serve | build)";;
+esac
