@@ -11,9 +11,17 @@
 #
 #   pineboxed check              # can it serve? busybox httpd + a docroot — says no if not
 #   pineboxed serve [PORT] [DOCROOT]
+#   pineboxed bridge [BRIDGE_PORT]   # the agent channel (node): SSE + POST, served by the client's repl bridge
+#   pineboxed up                 # both: the bridge (background) + the static client (foreground)
 #   pineboxed build              # build the client (../boxedPINE), then serve it
 #
-# Env: BB (busybox path), PINE_PORT, PINE_CLIENT (boxedPINE root), PINE_DOCROOT.
+# The bridge is the proxy's real work: it relays the agent conversation (server-sent
+# events on /events, messages by POST, agents reached by tag). It lives in the client
+# (repl/src/agent-bridge.ts, coupled to rosetta/src/agent.ts and run by node), so the
+# proxy invokes it rather than owning a copy.
+#
+# Env: BB (busybox path), PINE_PORT, PINE_BRIDGE_PORT, PINE_CLIENT (boxedPINE root),
+#      PINE_DOCROOT, AGENT_NAME.
 set -eu
 BB=${BB:-busybox}
 HERE=$(CDPATH= cd "$(dirname "$0")" && pwd)
@@ -21,6 +29,8 @@ CLIENT=${PINE_CLIENT:-"$HERE/../boxedPINE"}
 cmd=${1:-serve}
 PORT=${2:-${PINE_PORT:-8780}}
 DOCROOT=${3:-${PINE_DOCROOT:-$CLIENT/dist}}
+BRIDGE_PORT=${2:-${PINE_BRIDGE_PORT:-8743}}
+BRIDGE="$CLIENT/repl/src/agent-bridge.ts"
 fail(){ echo "pineboxed: $*" >&2; exit 1; }
 have_httpd(){ "$BB" httpd 2>&1 | grep -q . && return 0 || return 1; }
 
@@ -43,6 +53,23 @@ case "$cmd" in
     echo "pineboxed: serving $DOCROOT on http://127.0.0.1:$PORT  (busybox httpd; Ctrl-C to stop)"
     exec "$BB" httpd -f -v -p "127.0.0.1:$PORT" -h "$DOCROOT"
     ;;
-  -h|--help|help) sed -n '2,15p' "$0" ;;
+  bridge)
+    [ -f "$BRIDGE" ] || fail "agent bridge not found at $BRIDGE (set PINE_CLIENT to the boxedPINE root)"
+    command -v node >/dev/null 2>&1 || fail "node is required for the bridge"
+    echo "pineboxed: agent channel on http://127.0.0.1:$BRIDGE_PORT  (/events SSE, POST to speak; Ctrl-C to stop)"
+    AGENT_BRIDGE_PORT="$BRIDGE_PORT" AGENT_NAME="${AGENT_NAME:-hub}" AGENT_BRIDGE_STAY="${AGENT_BRIDGE_STAY:-1}" exec node "$BRIDGE" </dev/null
+    ;;
+  up)
+    [ -f "$BRIDGE" ] || fail "agent bridge not found at $BRIDGE (set PINE_CLIENT)"
+    [ -d "$DOCROOT" ] || fail "docroot not found: $DOCROOT  (try: pineboxed build)"
+    command -v node >/dev/null 2>&1 || fail "node is required for the bridge"
+    have_httpd || fail "no busybox httpd"
+    echo "pineboxed up: agent channel on :$BRIDGE_PORT  +  static client on :$PORT"
+    AGENT_BRIDGE_PORT="$BRIDGE_PORT" AGENT_NAME="${AGENT_NAME:-hub}" AGENT_BRIDGE_STAY=1 node "$BRIDGE" </dev/null &
+    bpid=$!
+    trap 'kill "$bpid" 2>/dev/null' EXIT INT TERM
+    "$BB" httpd -f -v -p "127.0.0.1:$PORT" -h "$DOCROOT"
+    ;;
+  -h|--help|help) sed -n '2,22p' "$0" ;;
   *) fail "unknown command: $cmd (check | serve | build)";;
 esac

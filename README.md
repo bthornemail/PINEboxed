@@ -9,13 +9,30 @@ BusyBox-like: **one file** (`pineboxed`), **one applet** (`busybox httpd`). No
 build, no framework, no dependency beyond BusyBox. Free, forkable, reconstructable.
 
 ```
-./pineboxed check              # can it serve? busybox httpd + a docroot — exits nonzero if not
-./pineboxed serve [PORT] [DOCROOT]
-./pineboxed build              # build the client (../boxedPINE), then serve its dist/
+./pineboxed check                 # can it serve? busybox httpd + a docroot — exits nonzero if not
+./pineboxed serve [PORT] [DOCROOT] # the static client (busybox httpd)
+./pineboxed bridge [BRIDGE_PORT]   # the agent channel (node): /events SSE, /message POST, tag routes
+./pineboxed up                     # both: the bridge (background) + the static client (foreground)
+./pineboxed build                  # build the client (../boxedPINE), then serve its dist/
 ```
 
-Defaults: `PORT=8780`, client at `../boxedPINE`, docroot `../boxedPINE/dist`.
-Override with `PINE_PORT`, `PINE_CLIENT`, `PINE_DOCROOT`, or `BB` (busybox path).
+Defaults: `PORT=8780`, `BRIDGE_PORT=8743`, client at `../boxedPINE`, docroot `../boxedPINE/dist`.
+Override with `PINE_PORT`, `PINE_BRIDGE_PORT`, `PINE_CLIENT`, `PINE_DOCROOT`, `AGENT_NAME`, or `BB`.
+
+## The agent channel (the proxy's real work)
+
+Serving static files is the small half. The proxy's real job is **relaying the agent
+conversation**: `GET /events` is the server-sent stream both sides listen to, `POST
+/message` is the author speaking, `POST /agent/message` is an agent speaking, `GET
+/health` reports `{ok, held}`, and agents are reached by their tag in the Host or path.
+
+The bridge lives in the client (`repl/src/agent-bridge.ts`, coupled to
+`rosetta/src/agent.ts`, run by plain `node` — no npm deps, no build), and the testbed
+spawns it, so it stays in `boxedPINE`. The proxy **invokes** it rather than owning a
+copy — the same way it serves the client's `dist/`: PINEboxed is the carrier, boxedPINE
+is what it carries. Messages are memory-only, capped; it validates and rejects malformed
+input (it can say no). `up` runs the channel and the static client together — two ports,
+one proxy.
 
 ## Decoupled from the representation
 
